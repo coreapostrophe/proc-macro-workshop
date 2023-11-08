@@ -1,8 +1,8 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, parse_quote, Data, DeriveInput, Fields, GenericParam, Generics};
+use syn::{parse_macro_input, parse_quote, Data, DeriveInput, Fields, GenericParam, Generics, Meta};
 
-#[proc_macro_derive(CustomDebug)]
+#[proc_macro_derive(CustomDebug, attributes(debug))]
 pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let parsed_input = parse_macro_input!(input as DeriveInput);
 
@@ -22,6 +22,8 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             }
         }
     };
+    
+    // eprintln!("{}", proc_macro::TokenStream::from(quote!(#generics)));
 
     proc_macro::TokenStream::from(quote)
 }
@@ -29,7 +31,7 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 fn add_trait_bounds(mut generics: Generics) -> Generics {
     for param in &mut generics.params {
         if let GenericParam::Type(ref mut type_param) = *param {
-            type_param.bounds.push(parse_quote!(fmt::Debug));
+            type_param.bounds.push(parse_quote!(std::fmt::Debug));
         }
     }
     generics
@@ -41,9 +43,28 @@ fn fields_implementation(data: &Data) -> TokenStream {
             Fields::Named(ref fields) => {
                 let recurse = fields.named.iter().map(|f| {
                     let name = &f.ident;
+                    let attr = {
+                        let mut result: Option<TokenStream> = None;
+                        for attr in &f.attrs {
+                            let meta = &attr.meta;
+                            if let Meta::NameValue(name_value) = meta {
+                                let value = &name_value.value;
+                                result = Some(quote! {
+                                    std::format_args!(#value, &self.#name)
+                                });
+                            }
+                        }
+                        result
+                    };
                     let quoted_ident = format!(r#"{}"#, name.as_ref().unwrap());
-                    quote! {
-                        .field(#quoted_ident, &self.#name)
+                    
+                    match attr {
+                        Some(attr_stream) => quote! {
+                            .field(#quoted_ident, &#attr_stream)
+                        },
+                        None => quote! {
+                            .field(#quoted_ident, &self.#name)
+                        }
                     }
                 });
                 quote! {
